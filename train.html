@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>远山列车 — 矢量风景交互模拟</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    background:#0a0d12;
+    color:#d4dce6;
+    font-family:"Microsoft YaHei","PingFang SC",sans-serif;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden; user-select:none;
+  }
+  #stage{
+    position:relative;
+    width:min(1280px,98vw);
+    aspect-ratio:1280/720;
+    box-shadow:0 0 60px rgba(0,0,0,.85), 0 0 0 1px #22303e;
+    border-radius:6px; overflow:hidden;
+  }
+  canvas#game{ display:block; width:100%; height:100%; background:#87b5d9; }
+
+  /* 主画面层不放任何 UI；连接面板只在开始菜单里 */
+  #connPanel{
+    width:100%; max-width:620px; margin-top:14px;
+    background:rgba(14,20,30,.8);
+    border:1px solid rgba(150,190,225,.16);
+    border-radius:7px; padding:12px 16px; font-size:12px;
+    text-align:left;
+  }
+  #connHead{ display:flex; align-items:center; gap:7px; margin-bottom:8px; }
+  #dot{ width:9px; height:9px; border-radius:50%; background:#7a1f1f;
+        box-shadow:0 0 6px #7a1f1f; }
+  #dot.on{ background:#4fd08a; box-shadow:0 0 8px #4fd08a; }
+  #connBtn{
+    margin-left:auto; cursor:pointer;
+    background:#1c2a38; color:#d7e2ee; border:1px solid #324a5e;
+    border-radius:4px; padding:3px 9px; font-size:11px;
+  }
+  #connBtn:hover{ background:#25384a; }
+  .bar-row{ display:flex; align-items:center; gap:7px; margin:4px 0; }
+  .bar-row label{ width:66px; color:#9db0c2; }
+  .bar{ flex:1; height:5px; background:rgba(255,255,255,.13);
+        border-radius:3px; overflow:hidden; }
+  .bar > i{ display:block; height:100%; width:0%; }
+  #smoothBar{ background:linear-gradient(90deg,#7a9a6a,#c8e0a0); }
+  #lightBar{ background:#e8c879; }
+  .row{ display:flex; align-items:center; gap:8px; margin-top:7px; }
+  #invertLbl{ color:#9db0c2; cursor:pointer; }
+
+  #overlay{
+    position:absolute; inset:0;
+    background:radial-gradient(ellipse at center,rgba(12,18,28,.82),rgba(4,6,10,.94));
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:30px; backdrop-filter:blur(2px);
+  }
+  #overlay.hidden{ display:none; }
+  h1{
+    font-size:48px; letter-spacing:16px; color:#e8eef5; font-weight:400;
+    text-shadow:0 0 26px rgba(255,220,150,.3), 0 2px 0 #000;
+    margin-bottom:6px;
+  }
+  #subtitle{ color:#7b8ea2; letter-spacing:8px; font-size:13px; margin-bottom:26px; }
+  .panel{
+    background:rgba(14,20,30,.8); border:1px solid rgba(150,190,225,.16);
+    border-radius:7px; padding:18px 26px; max-width:620px;
+    font-size:13.5px; line-height:2.1; color:#b4c2d2; text-align:left;
+  }
+  .panel b{ color:#ffe9b0; font-weight:normal; }
+  .panel .cool{ color:#a0c8e8; }
+  #startBtn{
+    margin-top:26px; cursor:pointer;
+    background:linear-gradient(#2c3c50,#1a2634);
+    border:1px solid #4a6478; color:#eef3f8;
+    font-size:17px; letter-spacing:8px; padding:11px 46px 11px 54px;
+    border-radius:5px; font-family:inherit;
+    box-shadow:0 0 18px rgba(255,220,150,.15);
+  }
+  #startBtn:hover{ box-shadow:0 0 28px rgba(255,220,150,.35); }
+  #warn{ margin-top:16px; font-size:11.5px; color:#64788c; line-height:1.8; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game" width="1280" height="720"></canvas>
+
+  <div id="overlay">
+    <h1>远山列车</h1>
+    <div id="subtitle">V A L L E Y　R A I L</div>
+    <div class="panel">
+      一列长长的列车，安静行驶在广阔的山野之间。<br>
+      · <b>旋钮电位器</b>：调节<b>山脉平滑度</b> —— 一侧棱角分明，另一侧极度平缓圆润<br>
+      · <b class="cool">光线传感器</b>：调节<b>昼夜时间</b> —— 遮住进入深夜，变亮经过黎明驶向正午，再入黄昏<br>
+      · 无硬件时用键盘：← → 调平滑度，↑ ↓ 调时间；M 静音，Esc 返回本菜单
+    </div>
+    <div id="connPanel">
+      <div id="connHead">
+        <span id="dot"></span><span id="connText">未连接 Arduino</span>
+        <button id="connBtn">连接</button>
+      </div>
+      <div class="bar-row"><label>旋钮·平滑</label><div class="bar"><i id="smoothBar"></i></div></div>
+      <div class="bar-row"><label>光线·昼夜</label><div class="bar"><i id="lightBar"></i></div></div>
+      <div class="row">
+        <input type="checkbox" id="invertLight">
+        <label for="invertLight" id="invertLbl">光线值反转（越亮数值越小时勾选）</label>
+      </div>
+    </div>
+    <button id="startBtn">出 发</button>
+    <div id="warn">推荐使用 Chrome / Edge 浏览器，并用 USB 连接已烧录程序的 Arduino Uno（9600 波特率）<br>
+      连接方式：先在上方「连接」选择串口，再点「出发」；进入画面后无任何界面元素</div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* =========================================================
+ *  远山列车 — 矢量风景交互模拟（云间列车 · 梦幻治愈版）
+ *  串口协议（9600）：旋钮,光线,A键,D键\n
+ *  旋钮 → 山脉平滑度 ｜ 光线 → 昼夜时间
+ *  主画面层无 UI；连接/设置在开始菜单完成，Esc 返回
+ *
+ *  渲染目标：横版梦幻治愈风，大色块云层氛围与强前后层次，
+ *  简洁扁平平涂。火车圆润可爱、低饱和，车窗暖光随昼夜变化。
+ *  天空大面积横向云层，分远/中/近景，色彩随昼夜平滑变化。
+ *  远山三层空气透视，轮廓由平滑度参数控制；蒸汽为梦幻云汽，
+ *  颜色与天空呼应。大面积天空留白 + 小列车反差营造辽阔治愈。
+ *  一切平滑插值，禁止复杂机械、写实纹理、噪点、硬阴影、多余装饰。
+ * ========================================================= */
+const W=1280, H=720;
+const GROUND_Y=H*0.80;             // 铁轨所在水平线
+const $=id=>document.getElementById(id);
+const canvas=$('game'), ctx=canvas.getContext('2d');
+
+/* ---------------- 工具 ---------------- */
+const clamp=(v,a,b)=> v<a?a:(v>b?b:v);
+const lerp =(a,b,t)=> a+(b-a)*t;
+const fract=v=> v-Math.floor(v);
+const smooth01=t=>{ t=clamp(t,0,1); return t*t*(3-2*t); };
+function hexRgb(h){ return [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)]; }
+function mixHex(h1,h2,t){
+  const a=hexRgb(h1),b=hexRgb(h2);
+  return 'rgb('+Math.round(lerp(a[0],b[0],t))+','+Math.round(lerp(a[1],b[1],t))+','+Math.round(lerp(a[2],b[2],t))+')';
+}
+// k>0 向白提亮，k<0 向黑压暗（输入为 'rgb(r,g,b)'）
+function shade(rgb,k){
+  const m=rgb.match(/\d+/g).map(Number);
+  const t=k>0?255:0, a=Math.abs(k);
+  return 'rgb('+m.map(v=>Math.round(lerp(v,t,a))).join(',')+')';
+}
+// 'rgb(...)' 与 '#hex' 再混色（用于黄昏染色）
+function mixRgb(rgb,hex,t){
+  const m=rgb.match(/\d+/g).map(Number), c=hexRgb(hex);
+  return 'rgb('+m.map((v,i)=>Math.round(lerp(v,c[i],t))).join(',')+')';
+}
+
+/* =========================================================
+ *  地形：值噪声（嶙峋） + 低频正弦（平缓），旋钮在两者间插值
+ * ========================================================= */
+function hash1(n){ return fract(Math.sin(n*127.1)*43758.5453); }
+function vnoise(x){
+  const ix=Math.floor(x), fx=x-ix;
+  const u=fx*fx*(3-2*fx);
+  return lerp(hash1(ix),hash1(ix+1),u);
+}
+function fractal(x,oct){
+  let v=0,amp=.5,f=1;
+  for(let i=0;i<oct;i++){ v+=vnoise(x*f)*amp; amp*=.5; f*=2.1; }
+  return v;
+}
+// 三层山：远 / 中 / 近 —— 严格空气透视（远浅灰蓝 / 中略饱和 / 近灰紫）
+const LAYERS=[
+  { par:.12, base:H*.62, amp:150, freq:.0016, jag:.9,  day:'#9fb0c4', night:'#1a2338', mist:.13 },
+  { par:.30, base:H*.70, amp:180, freq:.0011, jag:1.2, day:'#6f88a4', night:'#141d30', mist:.17 },
+  { par:.55, base:H*.78, amp:140, freq:.0007, jag:1.5, day:'#6e6c84', night:'#0f1626', mist:.20 },
+];
+function terrainH(L,wx,s){
+  const jag =(fractal(wx*L.freq*L.jag*3.1+ L.par*91,4)-.5)*2;      // -1~1 嶙峋
+  const flat=(Math.sin(wx*L.freq*2.2+L.par*57)*.6+Math.sin(wx*L.freq*4.7+13)*.4); // -1~1 平缓
+  return L.base - lerp(jag,flat,s)*L.amp*.5 - L.amp*.25;
+}
+
+/* =========================================================
+ *  昼夜：光线值 → 0~24 小时
+ * ========================================================= */
+const SKY_KEYS=[       // hour, 天顶色, 地平色
+  {h:0,   top:'#0a1128', bot:'#181430'},
+  {h:4.5, top:'#0a1020', bot:'#1c2238'},
+  {h:6,   top:'#2e3f5e', bot:'#cf8a58'},   // 黎明
+  {h:8,   top:'#7e9ec0', bot:'#d3dcd8'},
+  {h:11,  top:'#8ab0cd', bot:'#dcebe4'},
+  {h:13,  top:'#84aacb', bot:'#e0ece6'},   // 正午：浅雾蓝 → 淡奶青
+  {h:16,  top:'#7b9cba', bot:'#dcd6bc'},
+  {h:18,  top:'#525e7c', bot:'#e0a074'},   // 黄昏：灰蓝 → 淡蜜桃橘
+  {h:19.5,top:'#1d2746', bot:'#53405e'},
+  {h:21.5,top:'#0b1126', bot:'#161c32'},
+  {h:24,  top:'#0a1128', bot:'#181430'},
+];
+function skyAt(hour){
+  let i=0;
+  while(i<SKY_KEYS.length-2 && hour>SKY_KEYS[i+1].h) i++;
+  const k1=SKY_KEYS[i], k2=SKY_KEYS[i+1];
+  const t=clamp((hour-k1.h)/(k2.h-k1.h),0,1);
+  return { top:mixHex(k1.top,k2.top,t), bot:mixHex(k1.bot,k2.bot,t) };
+}
+// 白昼强度 0=深夜 1=正午
+function dayness(hour){
+  if(hour<5.5||hour>19.5) return 0;
+  if(hour<7)  return smooth01((hour-5.5)/1.5);
+  if(hour>18) return 1-smooth01((hour-18)/1.5);
+  return 1;
+}
+function phaseName(h){
+  if(h<4.5)  return '深夜';
+  if(h<6.5)  return '黎明';
+  if(h<9)    return '清晨';
+  if(h<11.5) return '上午';
+  if(h<13.5) return '正午';
+  if(h<16.5) return '下午';
+  if(h<19)   return '黄昏';
+  if(h<20.5) return '入夜';
+  return '深夜';
+}
+
+/* =========================================================
+ *  状态
+ * ========================================================= */
+let mode='menu';
+let nowMs=0, worldX=0;
+let smoothVal=.5, hour=12;
+let simSmooth=.5, simLight=512;   // 512 ≈ 正午 12:00
+const hw={ connected:false, port:null, pot:512, lightRaw:520, smooth:520 };
+let invertLight=false;
+let starsBg=[], smoke=[];
+const TRAIN_X=W*.62, TRAIN_SPEED=130;      // 像素/秒（匀速缓慢）
+// 前景山麓层：crest 可盖过车顶烟囱，山谷处火车与铁轨重新露出
+const FG={ par:1.15, base:H*.785, amp:145, freq:.0008, jag:1.1, day:'#57704e', night:'#0a1120' };
+
+// 云层：远 / 中 / 近三层视差，横向大色块云带（世界坐标，随 worldX 回收再生）
+const CLOUDS=[
+  { par:.05, band:[H*.08,H*.26], size:[.5,.8],   gap:430, clouds:[], nextX:0 },
+  { par:.13, band:[H*.12,H*.40], size:[.9,1.4],  gap:540, clouds:[], nextX:0 },
+  { par:.28, band:[H*.02,H*.46], size:[1.5,2.3], gap:820, clouds:[], nextX:0 },
+];
+// 单朵云的椭圆团块布局（横向延展，上下两层色块）
+const CP=[[-1.15,.12,.62],[-.55,-.1,.85],[0,-.2,1],[.6,-.08,.8],[1.15,.14,.6],[-.2,.18,.9],[.45,.2,.72]];
+
+function initWorld(){
+  const rnd=(function(s){return function(){s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};})(20261024);
+  starsBg=[];
+  for(let i=0;i<80;i++) starsBg.push({ x:rnd()*W, y:rnd()*H*.58, r:.4+rnd()*1.0, tw:rnd()*7 });
+  smoke=[];
+  for(const CL of CLOUDS){ CL.clouds.length=0; CL.nextX=worldX*CL.par-600; }
+}
+
+/* =========================================================
+ *  更新
+ * ========================================================= */
+function update(dt){
+  // —— 旋钮 → 平滑度 ——
+  let sTarget;
+  if(hw.connected){
+    sTarget=clamp(hw.pot/1023,0,1);
+  }else{
+    if(input.left)  simSmooth=clamp(simSmooth-dt*.5,0,1);
+    if(input.right) simSmooth=clamp(simSmooth+dt*.5,0,1);
+    sTarget=simSmooth;
+  }
+  smoothVal=lerp(smoothVal,sTarget,1-Math.pow(.001,dt));
+
+  // —— 光线 → 昼夜（0~24h） ——
+  let lightNorm;
+  if(hw.connected){
+    const t=invertLight?1023-hw.lightRaw:hw.lightRaw;
+    hw.smooth+=(t-hw.smooth)*.1;
+    lightNorm=clamp(hw.smooth/1023,0,1);
+  }else{
+    if(input.up)   simLight=clamp(simLight+300*dt,0,1023);
+    if(input.down) simLight=clamp(simLight-300*dt,0,1023);
+    hw.smooth+=(simLight-hw.smooth)*.1;
+    lightNorm=clamp(hw.smooth/1023,0,1);
+  }
+  hour=lerp(hour, lightNorm*24, 1-Math.pow(.001,dt));
+
+  // —— 世界前进 ——
+  worldX+=TRAIN_SPEED*dt;
+
+  // —— 云层生成与回收（三层视差） ——
+  for(const CL of CLOUDS){
+    const off=worldX*CL.par;
+    while(CL.nextX < off+W+520){
+      CL.clouds.push({
+        wx:CL.nextX,
+        y:lerp(CL.band[0],CL.band[1],Math.random()),
+        s:lerp(CL.size[0],CL.size[1],Math.random())
+      });
+      CL.nextX+=CL.gap*(.7+Math.random()*.6);
+    }
+    while(CL.clouds.length&&CL.clouds[0].wx<off-520) CL.clouds.shift();
+  }
+
+  // —— 烟囱蒸汽（缓慢蓬松，向右上方轻轻飘散，缓慢淡化） ——
+  const chimney={ x:TRAIN_X+134, y:GROUND_Y-100 };
+  if(Math.random()<dt*10){
+    smoke.push({
+      x:chimney.x+(Math.random()-.5)*6, y:chimney.y,
+      vx:5+Math.random()*9, vy:-16-Math.random()*12,
+      r:8+Math.random()*6, t:0, life:3.2+Math.random()*1.6
+    });
+  }
+  for(let i=smoke.length-1;i>=0;i--){
+    const p=smoke[i]; p.t+=dt;
+    p.x+=p.vx*dt; p.y+=p.vy*dt;
+    p.r+=8*dt;
+    if(p.t>=p.life) smoke.splice(i,1);
+  }
+  if(smoke.length>180) smoke.splice(0,smoke.length-180);
+}
+
+const input={ left:false, right:false, up:false, down:false };
+
+/* =========================================================
+ *  渲染
+ * ========================================================= */
+function render(){
+  const dn=dayness(hour);          // 0 夜 ~ 1 昼
+  const night=1-dn;
+  const twi=clamp(1-Math.abs(dn-.42)/.42,0,1);   // 黄昏权重（黎明/黄昏最强）
+
+  // 云层配色：白粉(昼) / 暖金珊瑚(昏) / 粉紫(夜)
+  let cloudL=mixHex('#8a76a8','#fdf6f4',dn); cloudL=mixRgb(cloudL,'#ffc890',twi*.7);
+  let cloudS=mixHex('#453a5c','#eecfc2',dn); cloudS=mixRgb(cloudS,'#d9808c',twi*.7);
+
+  // 1. 天空
+  const sky=skyAt(hour);
+  let g=ctx.createLinearGradient(0,0,0,GROUND_Y);
+  g.addColorStop(0,sky.top); g.addColorStop(1,sky.bot);
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,GROUND_Y+2);
+
+  // 2. 星星（夜，稀疏少量光点）
+  if(night>.08){
+    for(const s of starsBg){
+      const tw=.5+.5*Math.sin(nowMs*.0016+s.tw);
+      ctx.fillStyle='rgba(232,240,255,'+(night*(.14+.4*tw))+')';
+      ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,7); ctx.fill();
+    }
+  }
+
+  // 3. 太阳 / 月亮（沿弧线运行，柔和光晕）
+  const cx=W*.5, cyBase=GROUND_Y-20, R=W*.42;
+  let moonX=-999, moonY=-999;
+  // 太阳：只留柔和漫射光晕，无刺眼实体
+  const sa=(hour-6)/12*Math.PI;
+  if(sa>0&&sa<Math.PI){
+    const sx=cx-Math.cos(sa)*R, sy=cyBase-Math.sin(sa)*R*.62;
+    const sg=ctx.createRadialGradient(sx,sy,0,sx,sy,110);
+    sg.addColorStop(0,'rgba(250,246,232,.4)');
+    sg.addColorStop(.4,'rgba(248,240,220,.16)');
+    sg.addColorStop(1,'rgba(246,236,210,0)');
+    ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(sx,sy,110,0,7); ctx.fill();
+  }
+  let mh=hour-18; if(mh<0) mh+=24;
+  const ma=mh/12*Math.PI;
+  if(ma>0&&ma<Math.PI){
+    moonX=cx-Math.cos(ma)*R; moonY=cyBase-Math.sin(ma)*R*.62;
+    const mg=ctx.createRadialGradient(moonX,moonY,0,moonX,moonY,64);
+    mg.addColorStop(0,'rgba(214,228,252,.42)');
+    mg.addColorStop(1,'rgba(214,228,252,0)');
+    ctx.fillStyle=mg; ctx.beginPath(); ctx.arc(moonX,moonY,64,0,7); ctx.fill();
+    ctx.fillStyle='#e9eef8'; ctx.beginPath(); ctx.arc(moonX,moonY,15,0,7); ctx.fill();
+    ctx.fillStyle=sky.top;
+    ctx.beginPath(); ctx.arc(moonX+6,moonY-4,12,0,7); ctx.fill();
+  }
+
+  // 3.5 远景云（最慢，在天体之后、山脉之前）
+  drawCloudLayer(CLOUDS[0],cloudL,cloudS);
+
+  // 4. 三层山脉（同色系平涂渐变 · 空气透视，无纹理无描边） + 山脚雾气
+  for(const L of LAYERS){
+    // 先采样地形高度
+    const ys=[];
+    for(let sx=-4;sx<=W+7;sx+=7) ys.push(terrainH(L,worldX*L.par+sx,smoothVal));
+    // 黄昏时山体染淡红橘
+    const base=mixRgb(mixHex(L.night,L.day,dn),'#d88a6a',twi*.45);
+    // 坡顶略亮、坡底略暗的同色系渐变
+    const gr=ctx.createLinearGradient(0,L.base-L.amp,0,H);
+    gr.addColorStop(0,shade(base,.16*dn+.05));
+    gr.addColorStop(.5,base);
+    gr.addColorStop(1,shade(base,-.22));
+    ctx.fillStyle=gr;
+    ctx.beginPath(); ctx.moveTo(-4,H);
+    let xi=0;
+    for(let sx=-4;sx<=W+7;sx+=7) ctx.lineTo(sx,ys[xi++]);
+    ctx.lineTo(W+4,H); ctx.closePath(); ctx.fill();
+    // 雾气：山脚一条柔和的水平光带，把层与层柔和衔接
+    const fg=ctx.createLinearGradient(0,L.base-46,0,L.base+58);
+    const fa=L.mist*(.35+.65*dn)+.06*night;
+    fg.addColorStop(0,'rgba(228,236,246,0)');
+    fg.addColorStop(.55,'rgba(228,236,246,'+fa+')');
+    fg.addColorStop(1,'rgba(228,236,246,0)');
+    ctx.fillStyle=fg;
+    ctx.fillRect(0,L.base-46,W,104);
+  }
+
+  // 4.5 中景云（在山脉之前景，火车之后）
+  drawCloudLayer(CLOUDS[1],cloudL,cloudS);
+
+  // 5. 近处平缓草坡（低饱和沉稳灰绿，与远山拉开明度）
+  g=ctx.createLinearGradient(0,GROUND_Y-30,0,H);
+  g.addColorStop(0,mixHex('#121a24','#7e9078',dn));
+  g.addColorStop(1,mixHex('#0a0f16','#54685a',dn));
+  ctx.fillStyle=g; ctx.fillRect(0,GROUND_Y-32,W,H-GROUND_Y+32);
+
+  // 6. 铁轨（极简：两条细线，无枕木）
+  ctx.fillStyle=mixHex('#232a34','#9a9aa0',dn);
+  ctx.fillRect(0,GROUND_Y-2,W,2);
+  ctx.fillRect(0,GROUND_Y+7,W,2);
+
+  // 7. 大火车（尾部超出屏幕左缘）
+  drawTrain(dn,night);
+
+  // 8. 蒸汽（梦幻云汽：昼偏白 / 昏淡橘 / 夜粉紫，缓慢消散）
+  const sR=Math.round(lerp(lerp(238,250,twi),196,night));
+  const sG=Math.round(lerp(lerp(240,208,twi),170,night));
+  const sB=Math.round(lerp(lerp(244,182,twi),206,night));
+  for(const p of smoke){
+    const k=1-p.t/p.life;
+    ctx.fillStyle='rgba('+sR+','+sG+','+sB+','+(.14*k)+')';
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,7); ctx.fill();
+  }
+
+  // 9. 前景山麓（高起伏平涂色块，可吞没整列火车与铁轨）
+  {
+    const ys=[];
+    for(let sx=-4;sx<=W+8;sx+=7) ys.push(terrainH(FG,worldX*FG.par+sx,smoothVal));
+    const fgb=mixRgb(mixHex(FG.night,FG.day,dn),'#d88a6a',twi*.45);
+    const fgr=ctx.createLinearGradient(0,FG.base-FG.amp,0,H);
+    fgr.addColorStop(0,shade(fgb,.14*dn+.04));
+    fgr.addColorStop(.5,fgb);
+    fgr.addColorStop(1,shade(fgb,-.26));
+    ctx.fillStyle=fgr;
+    ctx.beginPath(); ctx.moveTo(-4,H);
+    let xi=0;
+    for(let sx=-4;sx<=W+8;sx+=7) ctx.lineTo(sx,ys[xi++]);
+    ctx.lineTo(W+4,H); ctx.closePath(); ctx.fill();
+  }
+
+  // 9.5 前景云（最大、视差最快，从画面上半部掠过，形成包围感）
+  drawCloudLayer(CLOUDS[2],cloudL,cloudS);
+
+  // 10. 夜间整体压暗 + 一束柔和车头暖光
+  if(night>.02){
+    ctx.fillStyle='rgba(8,12,24,'+(night*.28)+')';
+    ctx.fillRect(0,0,W,H);
+    if(night>.15){
+      const hx=TRAIN_X+188, hy=GROUND_Y-38;
+      ctx.save();
+      ctx.globalCompositeOperation='lighter';
+      // 前方一片柔和暖光域
+      const hg=ctx.createRadialGradient(hx,hy,6,hx,hy,170);
+      hg.addColorStop(0,'rgba(255,226,160,'+(.42*night)+')');
+      hg.addColorStop(.5,'rgba(255,214,130,'+(.16*night)+')');
+      hg.addColorStop(1,'rgba(255,205,110,0)');
+      ctx.fillStyle=hg;
+      ctx.beginPath();
+      ctx.moveTo(hx,hy);
+      ctx.arc(hx,hy,170,-.26,.30);
+      ctx.closePath(); ctx.fill();
+      // 灯芯
+      ctx.fillStyle='rgba(255,242,205,'+(.95*night)+')';
+      ctx.beginPath(); ctx.arc(hx,hy,4,0,7); ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+/* ---------------- 云层绘制（两层色块椭圆团：底部阴影 + 顶部受光） ---------------- */
+function drawCloudLayer(CL,cL,cS){
+  const off=worldX*CL.par;
+  for(const c of CL.clouds){
+    const sx=c.wx-off;
+    if(sx<-460||sx>W+460) continue;
+    const s=c.s, r=30*s;
+    ctx.fillStyle=cS;
+    for(const p of CP){
+      ctx.beginPath();
+      ctx.ellipse(sx+p[0]*46*s, c.y+p[1]*22*s+9*s, r*p[2], r*p[2]*.58, 0,0,7);
+      ctx.fill();
+    }
+    ctx.fillStyle=cL;
+    for(const p of CP){
+      ctx.beginPath();
+      ctx.ellipse(sx+p[0]*46*s, c.y+p[1]*22*s, r*p[2], r*p[2]*.58, 0,0,7);
+      ctx.fill();
+    }
+  }
+}
+
+/* ---------------- 大火车（极简扁平 · 灰绿 + 浅棕，尾部出左屏） ---------------- */
+function drawTrain(dn,night){
+  const by=GROUND_Y-8;                     // 车轮着轨点
+  const bobY=Math.sin(worldX*.045)*.9;     // 行驶轻微起伏
+  const rot=worldX/15;                     // 车轮转角
+
+  // 配色：柔和灰豆绿车身 / 浅奶咖车顶 / 极细低对比米黄腰线，夜里压暗
+  const body=mixHex('#202a26','#6f8072',dn);
+  const stripe=mixHex('#3f4238','#cfc5a4',dn);
+  const roof=mixHex('#2a241e','#c8b89e',dn);
+  const wheelCol=mixHex('#14181f','#2c313a',dn);
+
+  ctx.save();
+  ctx.translate(0,bobY);
+
+  // ===== 六节车厢（尾部超出屏幕左缘） =====
+  const carW=130, carH=52, slot=140;
+  const firstX=TRAIN_X-6*slot;
+  const cars=[];
+  for(let i=0;i<6;i++) cars.push({ x:firstX+i*slot, w:carW, h:carH });
+  for(const c of cars){
+    if(c.x>W+40) continue;
+    // 车轮（下半会被前景山麓遮挡）
+    for(const wx of [c.x+24,c.x+c.w-24]) drawWheel(wx,by-13,13,rot,wheelCol,dn);
+    // 车体：大圆角
+    ctx.fillStyle=body;
+    ctx.beginPath(); ctx.roundRect(c.x,by-10-c.h,c.w,c.h+3,12); ctx.fill();
+    // 车顶：深棕圆拱
+    ctx.fillStyle=roof;
+    ctx.beginPath(); ctx.roundRect(c.x-2,by-10-c.h-7,c.w+4,11,5); ctx.fill();
+    // 极细米黄腰线（弱化，不抢视觉）
+    ctx.globalAlpha=.75;
+    ctx.fillStyle=stripe;
+    ctx.fillRect(c.x+5,by-10-c.h+c.h*.58,c.w-10,2);
+    ctx.globalAlpha=1;
+    // 三扇小圆窗（白天淡米白几乎不发光，夜里自动提亮成暖黄）
+    for(let k=0;k<3;k++){
+      const wxp=c.x+24+k*38, wyp=by-10-c.h+14;
+      ctx.fillStyle=night>.25
+        ? 'rgba(255,214,140,'+(.6+.3*night)+')'
+        : mixHex('#3a4148','#e6e0d2',dn);
+      ctx.beginPath(); ctx.arc(wxp,wyp,7.5,0,7); ctx.fill();
+    }
+    // 车厢连接小球
+    ctx.fillStyle=wheelCol;
+    ctx.beginPath(); ctx.arc(c.x+c.w+7,by-30,3.2,0,7); ctx.fill();
+  }
+
+  // ===== 车头 =====
+  const ex=TRAIN_X;
+  // 车轮（三大一小）
+  drawWheel(ex+34, by-17,17,rot,wheelCol,dn);
+  drawWheel(ex+82, by-17,17,rot,wheelCol,dn);
+  drawWheel(ex+130,by-17,17,rot,wheelCol,dn);
+  drawWheel(ex+172,by-12,12,rot,wheelCol,dn);
+  // 车头主体：圆润锅炉 + 前鼻
+  ctx.fillStyle=body;
+  ctx.beginPath();
+  ctx.roundRect(ex,by-62,182,54,16);
+  ctx.roundRect(ex+150,by-48,36,40,12);
+  ctx.fill();
+  // 车头极细腰线
+  ctx.globalAlpha=.75;
+  ctx.fillStyle=stripe;
+  ctx.fillRect(ex+6,by-36,172,2);
+  ctx.globalAlpha=1;
+  // 驾驶室（更高一截的圆顶）
+  ctx.fillStyle=body;
+  ctx.beginPath(); ctx.roundRect(ex+6,by-86,58,26,9); ctx.fill();
+  ctx.fillStyle=roof;
+  ctx.beginPath(); ctx.roundRect(ex+2,by-91,66,10,5); ctx.fill();    // 驾驶室顶
+  // 烟囱（圆头，蒸汽从这里缓慢冒出）
+  ctx.beginPath(); ctx.roundRect(ex+128,by-82,13,22,5); ctx.fill();
+  ctx.beginPath(); ctx.arc(ex+134.5,by-83,9,Math.PI,0); ctx.fill();
+  // 驾驶室圆窗（白天米白，夜里暖光）
+  ctx.fillStyle=night>.25
+    ? 'rgba(255,214,140,'+(.6+.3*night)+')'
+    : mixHex('#3a4148','#e6e0d2',dn);
+  ctx.beginPath(); ctx.arc(ex+35,by-73,8.5,0,7); ctx.fill();
+  // 车底一条细影
+  ctx.fillStyle='rgba(0,0,0,'+(.18+.2*night)+')';
+  ctx.fillRect(firstX,by-2,(ex+186)-firstX,4);
+
+  // ===== 环境轮廓光（白天极淡暖调，黄昏暖橘，夜晚月光蓝紫） =====
+  const twi=clamp(1-Math.abs(dn-.42)/.42,0,1);
+  const rimAlpha=.06*dn+.18*twi+.16*night;
+  if(rimAlpha>.04){
+    const rimCol=night>.45?'168,178,228':'255,205,140';
+    ctx.strokeStyle='rgba('+rimCol+','+rimAlpha+')';
+    ctx.lineWidth=1.6; ctx.lineCap='round';
+    const rim=(x1,y1,x2,y2)=>{ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); };
+    for(const c of cars){
+      if(c.x>W) continue;
+      rim(Math.max(c.x-2,-10),by-17-c.h,Math.min(c.x+c.w+2,W+10),by-17-c.h);
+    }
+    rim(ex+2,by-91,ex+68,by-91);
+    rim(ex+8,by-62,ex+180,by-62);
+  }
+
+  ctx.restore();
+}
+
+function drawWheel(wx,wy,r,rot,col,dn){
+  // 极简车轮：只用一个色块
+  ctx.fillStyle=col;
+  ctx.beginPath(); ctx.arc(wx,wy,r,0,7); ctx.fill();
+}
+
+/* =========================================================
+ *  面板数值条（只在开始菜单可见）
+ * ========================================================= */
+function updateHUD(){
+  $('smoothBar').style.width=(smoothVal*100)+'%';
+  $('lightBar').style.width=(clamp(hw.smooth/1023,0,1)*100)+'%';
+}
+
+/* =========================================================
+ *  Web Serial
+ * ========================================================= */
+async function connectArduino(){
+  if(!('serial' in navigator)){
+    $('connText').textContent='浏览器不支持 Web Serial';
+    return;
+  }
+  try{
+    const port=await navigator.serial.requestPort();
+    await port.open({baudRate:9600});
+    hw.port=port; hw.connected=true;
+    $('dot').classList.add('on');
+    $('connText').textContent='已连接 Arduino';
+    $('connBtn').textContent='断开';
+    readLoop(port);
+  }catch(err){
+    $('connText').textContent='连接失败 / 已取消';
+  }
+}
+async function disconnectArduino(){
+  try{ if(hw.port) await hw.port.close(); }catch(e){}
+  hw.port=null; hw.connected=false;
+  $('dot').classList.remove('on');
+  $('connText').textContent='未连接 Arduino';
+  $('connBtn').textContent='连接';
+}
+async function readLoop(port){
+  const decoder=new TextDecoder();
+  let buf='';
+  while(port.readable){
+    try{
+      const reader=port.readable.getReader();
+      while(true){
+        const {value,done}=await reader.read();
+        if(done) break;
+        buf+=decoder.decode(value,{stream:true});
+        let idx;
+        while((idx=buf.indexOf('\n'))>=0){
+          parseLine(buf.slice(0,idx).trim());
+          buf=buf.slice(idx+1);
+        }
+      }
+      reader.releaseLock();
+    }catch(err){ break; }
+  }
+  hw.connected=false;
+  $('dot').classList.remove('on');
+  $('connText').textContent='连接已断开';
+  $('connBtn').textContent='连接';
+}
+function parseLine(line){
+  const p=line.split(',');
+  if(p.length!==4) return;
+  const pot=+p[0], light=+p[1];
+  if(!Number.isFinite(pot)||!Number.isFinite(light)) return;
+  hw.pot=clamp(pot,0,1023);
+  hw.lightRaw=clamp(light,0,1023);
+}
+
+/* =========================================================
+ *  音效（远处车轮低鸣，很轻）
+ * ========================================================= */
+let AC=null, master=null, muted=false, chuffT=0, chuffAlt=false;
+function initAudio(){
+  if(AC){ AC.resume(); return; }
+  AC=new (window.AudioContext||window.webkitAudioContext)();
+  master=AC.createGain(); master.gain.value=.5; master.connect(AC.destination);
+}
+function sfxChuff(hi){
+  if(!AC||muted) return;
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.type='sine';
+  o.frequency.setValueAtTime(hi?88:70,AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(46,AC.currentTime+.12);
+  g.gain.setValueAtTime(.045,AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(.0001,AC.currentTime+.13);
+  o.connect(g); g.connect(master);
+  o.start(); o.stop(AC.currentTime+.14);
+}
+
+/* =========================================================
+ *  输入
+ * ========================================================= */
+addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){ input.left=true;  simSmooth=clamp(simSmooth-.08,0,1); }
+  if(e.code==='ArrowRight'||e.code==='KeyD'){ input.right=true; simSmooth=clamp(simSmooth+.08,0,1); }
+  if(e.code==='ArrowUp'||e.code==='KeyW'){ input.up=true;   simLight=clamp(simLight+60,0,1023); e.preventDefault(); }
+  if(e.code==='ArrowDown'||e.code==='KeyS'){ input.down=true; simLight=clamp(simLight-60,0,1023); e.preventDefault(); }
+  if(e.code==='Enter'&&mode==='menu') startGame();
+  if(e.code==='Escape'&&mode==='play'){ mode='menu'; $('overlay').classList.remove('hidden'); }
+  if(e.code==='KeyM'){ muted=!muted; if(master) master.gain.value=muted?0:.5; }
+});
+addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')  input.left=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD') input.right=false;
+  if(e.code==='ArrowUp'||e.code==='KeyW')    input.up=false;
+  if(e.code==='ArrowDown'||e.code==='KeyS')  input.down=false;
+});
+
+$('connBtn').addEventListener('click',()=>{
+  if(hw.connected) disconnectArduino(); else connectArduino();
+});
+$('invertLight').addEventListener('change',e=>{ invertLight=e.target.checked; });
+$('startBtn').addEventListener('click',startGame);
+
+function startGame(){
+  initWorld();
+  initAudio();
+  mode='play';
+  $('overlay').classList.add('hidden');
+}
+
+/* =========================================================
+ *  主循环
+ * ========================================================= */
+initWorld();
+let lastT=performance.now();
+function loop(t){
+  nowMs=t;
+  let dt=(t-lastT)/1000; lastT=t;
+  dt=Math.min(dt,.05);
+  if(mode==='play'){
+    update(dt);
+    // 轻节奏的车轮低鸣
+    chuffT-=dt;
+    if(chuffT<=0){ chuffT=.42; chuffAlt=!chuffAlt; sfxChuff(chuffAlt); }
+  }
+  if(mode!=='menu') render();
+  updateHUD();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
